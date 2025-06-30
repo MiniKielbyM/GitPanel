@@ -408,11 +408,9 @@ public class GitPanelWindow : EditorWindow
     {
         try
         {
-            RunGitCommand("add -A");
+            RunGitCommand("add .");
             RunGitCommand("add .mp3");
             RunGitCommand("add .wav");
-            RunGitCommand("add .ogg");
-
             RunGitCommand($"commit -m \"{message}\"");
             UnityEngine.Debug.Log("✅ Commit successful.");
             if (EditorUtility.DisplayDialog("Push to GitHub", "Do you want to push your changes to GitHub?", "Push", "Cancel"))
