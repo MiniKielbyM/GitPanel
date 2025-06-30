@@ -222,44 +222,198 @@ public static class GitUtils
     }
 
 }
-public class GitPanelWindow : EditorWindow
+public class GitHubOAuthWindow : EditorWindow
 {
-    private string commitMessage = "";
-    private string[] changedFiles = new string[0];
-    private double lastRefreshTime;
-    private double refreshInterval = 5.0;
-
-    private enum PushState { Idle, Pushing, Success, Error }
-    private PushState pushStatus = PushState.Idle;
-    private string lastPushMessage = "";
-    private double lastPushTime;
-
-    [MenuItem("Window/Git Panel")]
+    private const string clientId = "Ov23livN2pwLZuwTaP4Q";
+    private const string clientSecret = "ee62345ec2c05b532b63f1a8bb823cc0bffa17e6";
+    private const string redirectUri = "http://localhost:4567/callback/";
+    public const string tokenKey = "GitHubAccessToken";
+    public static string AccessToken => EditorPrefs.GetString(tokenKey, "");
+    public static bool IsSignedIn() => !string.IsNullOrEmpty(AccessToken);
+    [MenuItem("GitPane/Sign in with GitHub", false, 10)]
     public static void ShowWindow()
     {
-        GetWindow<GitPanelWindow>("Git Panel");
+        GitHubOAuthWindow window = GetWindow<GitHubOAuthWindow>("GitHub OAuth");
+        window.InitiateOAuthFlow();
+        window.Close();
     }
-
-    private void OnEnable()
+    private async void InitiateOAuthFlow()
     {
-        RefreshGitStatus();
+        string authUrl = $"https://github.com/login/oauth/authorize?client_id={clientId}&redirect_uri={redirectUri}&scope=repo";
+        Application.OpenURL(authUrl);
+        string code = await WaitForOAuthCode();
+
+        if (!string.IsNullOrEmpty(code))
+        {
+            string token = await ExchangeCodeForToken(code);
+            if (!string.IsNullOrEmpty(token))
+            {
+                EditorPrefs.SetString(tokenKey, token);
+            }
+        }
+    }
+    private async Task<string> WaitForOAuthCode()
+    {
+        HttpListener listener = new HttpListener();
+        listener.Prefixes.Add(redirectUri);
+
+        try
+        {
+            listener.Start();
+            var context = await listener.GetContextAsync();
+            var code = context.Request.QueryString["code"];
+            byte[] buffer = Encoding.UTF8.GetBytes("<html><body><h2>GitHub login successful. You may return to Unity.</h2></body></html>");
+            context.Response.ContentLength64 = buffer.Length;
+            await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+            context.Response.OutputStream.Close();
+            return code;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+
+    }
+    private async Task<string> ExchangeCodeForToken(string code)
+    {
+        using (var client = new HttpClient())
+        {
+            var values = new Dictionary<string, string>
+            {
+                { "client_id", clientId },
+                { "client_secret", clientSecret },
+                { "code", code },
+                { "redirect_uri", redirectUri }
+            };
+
+            var content = new FormUrlEncodedContent(values);
+            var response = await client.PostAsync("https://github.com/login/oauth/access_token", content);
+            var body = await response.Content.ReadAsStringAsync();
+            var match = Regex.Match(body, @"access_token=([^&]+)");
+            return match.Success ? match.Groups[1].Value : null;
+        }
+    }
+    [MenuItem("GitPane/Sign in with GitHub", true, 10)]
+    public static bool ValidateOAuth()
+    {
+        return !IsSignedIn();
+    }
+}
+
+public class GithubSignOutWindow : EditorWindow
+{
+    [MenuItem("GitPane/Sign out from GitHub", false, 12)]
+    public static void ShowWindow()
+    {
+        GithubSignOutWindow window = GetWindow<GithubSignOutWindow>("GitHub Sign Out");
+        window.Show();
     }
 
     private void OnGUI()
     {
-        GUILayout.Label("Changed Files:", EditorStyles.boldLabel);
-
-        foreach (var file in changedFiles)
+        GUILayout.Label("Are you sure you want to sign out?", EditorStyles.boldLabel);
+        if (GUILayout.Button("Sign Out"))
         {
-            GUILayout.Label(file);
+            EditorPrefs.DeleteKey(GitHubOAuthWindow.tokenKey);
+            Close();
         }
+        if (GUILayout.Button("Cancel"))
+        {
+            Close();
+        }
+    }
 
-        GUILayout.Space(10);
-        GUILayout.Label("Commit Message:", EditorStyles.boldLabel);
-        commitMessage = EditorGUILayout.TextField(commitMessage);
+    [MenuItem("GitPane/Sign out from GitHub", true, 12)]
+    public static bool ValidateSignOut()
+    {
+        return GitHubOAuthWindow.IsSignedIn();
+    }
+}
 
-        GUILayout.Space(10);
+public class GitPanelWindow : EditorWindow
+{
+    private bool remoteHasChanges = false;
+    private async Task CheckRemoteChangesAsync()
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                RunGitCommand("fetch");
+                string result = RunGitCommand("rev-list HEAD..origin/main --count");
+                remoteHasChanges = int.TryParse(result, out int count) && count > 0;
+            }
+            catch
+            {
+                remoteHasChanges = false;
+            }
+        });
+        Repaint();
+    }
+    private async void Update()
+    {
+        if (EditorApplication.timeSinceStartup - lastRefreshTime > refreshInterval)
+        {
+            RefreshGitStatus();
+            Repaint();
+            if (GitUtils.HasGitHubRemote())
+            {
+                await CheckRemoteChangesAsync();
+                UnityEngine.Debug.Log(remoteHasChanges
+                    ? "🔄 Remote has changes."
+                    : "✅ Remote is up to date.");
+            }
+            else
+            {
+                remoteHasChanges = false;
+            }
+            lastRefreshTime = EditorApplication.timeSinceStartup;
+        }
+    }
+
+    private string commitMessage = "";
+    private List<GitFileChange> fileChanges = new List<GitFileChange>();
+    private double lastRefreshTime;
+    private const double refreshInterval = 1.0; // seconds
+    [MenuItem("GitPane/🐱 Git Panel")]
+    public static void ShowWindow()
+    {
+        var window = GetWindow<GitPanelWindow>("Git Panel");
+        window.minSize = new Vector2(300, 200);
+    }
+    private async void OnEnable()
+    {
+        if (!GitUtils.IsGitRepository())
+        {
+            bool create = EditorUtility.DisplayDialog(
+                "Git Not Initialized",
+                "This project is not a Git repository. Would you like to create one and push it to GitHub?",
+                "Yes", "No"
+            );
+            if (create)
+            {
+                if (!GitHubOAuthWindow.IsSignedIn())
+                {
+                    EditorUtility.DisplayDialog("GitHub Not Signed In", "You must sign in with GitHub first.", "OK");
+                    return;
+                }
+                string repoName = Path.GetFileName(Directory.GetCurrentDirectory());
+                string accessToken = GitHubOAuthWindow.AccessToken;
+                string url = await GitUtils.CreateRepo(repoName, accessToken);
+                if (!string.IsNullOrEmpty(url))
+                {
+                    UnityEngine.Debug.Log("✅ Repo created and pushed to GitHub: " + url);
+                }
+            }
+        }
+        RefreshGitStatus();
+    }
+    private void OnGUI()
+    {
+        GUILayout.Label("Commit Message", EditorStyles.boldLabel);
+        commitMessage = GUILayout.TextField(commitMessage);
         GUILayout.BeginHorizontal();
+
         if (GUILayout.Button("✓ Commit", GUILayout.Height(25)))
         {
             if (!string.IsNullOrWhiteSpace(commitMessage))
@@ -272,120 +426,140 @@ public class GitPanelWindow : EditorWindow
                 UnityEngine.Debug.LogWarning("⚠️ Commit message cannot be empty.");
             }
         }
-
-        GUI.enabled = GitUtils.HasGitHubRemote();
-        if (GUILayout.Button(GetPushButtonContent(), GUILayout.Width(80)))
-        {
-            PushToGitHub();
-        }
-        GUI.enabled = true;
-        GUILayout.EndHorizontal();
-    }
-
-    private GUIContent GetPushButtonContent()
-    {
-        string label = "Push";
-        Texture icon = EditorGUIUtility.IconContent("CloudConnect").image;
-
-        switch (pushStatus)
-        {
-            case PushState.Pushing:
-                label = "Pushing...";
-                icon = EditorGUIUtility.IconContent("RotateTool").image;
-                break;
-            case PushState.Success:
-                label = "✓ Pushed";
-                icon = EditorGUIUtility.IconContent("Collab").image;
-                break;
-            case PushState.Error:
-                label = "Retry";
-                icon = EditorGUIUtility.IconContent("console.erroricon").image;
-                break;
-        }
-
-        return new GUIContent(label, icon);
-    }
-
-    private void RefreshGitStatus()
-    {
-        changedFiles = RunGitCommand("status --porcelain").Split('\n');
-    }
-
-    private void CommitChanges(string message)
-    {
-        RunGitCommand("add .");
-        RunGitCommand($"commit -m \"{message}\"");
-        RefreshGitStatus();
-    }
-
-    private async void PushToGitHub()
-    {
-        pushStatus = PushState.Pushing;
-        Repaint();
-
-        await Task.Run(() =>
-        {
-            try
-            {
-                RunGitCommand("push");
-                pushStatus = PushState.Success;
-                lastPushMessage = "✅ Changes pushed to GitHub.";
-            }
-            catch (System.Exception e)
-            {
-                pushStatus = PushState.Error;
-                lastPushMessage = $"❌ Push failed: {e.Message}";
-            }
-        });
-
-        lastPushTime = EditorApplication.timeSinceStartup;
-        UnityEngine.Debug.Log(lastPushMessage);
-        Repaint();
-    }
-
-    private void Update()
-    {
-        if (EditorApplication.timeSinceStartup - lastRefreshTime > refreshInterval)
+        if (GUILayout.Button("↑ Push  ", GUILayout.Height(25), GUILayout.Width(position.width * 0.25f)))
         {
             RefreshGitStatus();
-            Repaint();
-            lastRefreshTime = EditorApplication.timeSinceStartup;
         }
-
-        if (pushStatus == PushState.Success || pushStatus == PushState.Error)
+        if (GUILayout.Button("↓ Pull  ", GUILayout.Height(25), GUILayout.Width(position.width * 0.25f)))
         {
-            if (EditorApplication.timeSinceStartup - lastPushTime > 3.0)
-            {
-                pushStatus = PushState.Idle;
-                Repaint();
-            }
+            RefreshGitStatus();
+        }
+        GUILayout.EndHorizontal();
+        GUILayout.Space(10);
+        GUILayout.Label("Changes", EditorStyles.boldLabel);
+        if (fileChanges.Count == 0)
+        {
+            GUILayout.Label("No changes detected.");
+        }
+        foreach (var change in fileChanges)
+        {
+            GUILayout.BeginHorizontal();
+            GUI.color = GetStatusColor(change.Status);
+            GUILayout.Label(GetStatusSymbol(change.Status), GUILayout.Width(20));
+            GUI.color = Color.white;
+            GUILayout.Label(change.FilePath);
+            GUILayout.EndHorizontal();
         }
     }
-
-    private string RunGitCommand(string command)
+    private void RefreshGitStatus()
     {
-        var processInfo = new ProcessStartInfo("git", command)
+        fileChanges = GetGitStatus();
+    }
+    private void CommitChanges(string message)
+    {
+        try
         {
+            RunGitCommand("add .");
+            RunGitCommand("add .mp3");
+            RunGitCommand("add .wav");
+            RunGitCommand($"commit -m \"{message}\"");
+            UnityEngine.Debug.Log("✅ Commit successful.");
+            if (EditorUtility.DisplayDialog("Push to GitHub", "Do you want to push your changes to GitHub?", "Push", "Cancel"))
+            {
+                RunGitCommand("push -f");
+                UnityEngine.Debug.Log("✅ Changes pushed to GitHub.");
+            }
+            RefreshGitStatus();
+            Repaint();
+        }
+        catch (System.Exception e)
+        {
+            UnityEngine.Debug.LogError("❌ Commit failed: " + e.Message);
+        }
+    }
+    private List<GitFileChange> GetGitStatus()
+    {
+        var changes = new List<GitFileChange>();
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = "status --porcelain",
+            WorkingDirectory = Directory.GetCurrentDirectory(),
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        using (var process = Process.Start(startInfo))
+        {
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            foreach (var line in output.Split('\n'))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                string status = line.Substring(0, 2).Trim();
+                string filePath = line.Substring(3).Trim();
+                changes.Add(new GitFileChange { Status = status, FilePath = filePath });
+            }
+        }
+        return changes;
+    }
+
+    private string RunGitCommand(string args)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = args,
+            WorkingDirectory = Directory.GetCurrentDirectory(),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = Directory.GetCurrentDirectory()
+            CreateNoWindow = true
         };
-
-        using (var process = Process.Start(processInfo))
+        using (var process = Process.Start(startInfo))
         {
-            string result = process.StandardOutput.ReadToEnd();
+            string output = process.StandardOutput.ReadToEnd();
             string error = process.StandardError.ReadToEnd();
             process.WaitForExit();
-
-            if (process.ExitCode != 0)
-            {
-                throw new System.Exception(error);
-            }
-
-            return result.Trim();
+            if (!string.IsNullOrEmpty(error))
+                UnityEngine.Debug.LogWarning("Git Error: " + error);
+            else
+                UnityEngine.Debug.Log(output);
+            return output;
         }
     }
+
+    private string GetStatusSymbol(string status)
+    {
+        return status switch
+        {
+            "M" => "M",
+            "A" => "A",
+            "D" => "D",
+            "R" => "R",
+            "??" => "U",
+            "!" => "!",
+            _ => status
+        };
+    }
+    private Color GetStatusColor(string status)
+    {
+        return status switch
+        {
+            "M" => Color.yellow,
+            "A" => Color.green,
+            "D" => Color.red,
+            "R" => Color.cyan,
+            "??" => Color.green,
+            _ => Color.white
+        };
+    }
+
+    private struct GitFileChange
+    {
+        public string Status;
+        public string FilePath;
+    }
 }
+
 #endif
