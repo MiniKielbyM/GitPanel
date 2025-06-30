@@ -333,6 +333,7 @@ public class GithubSignOutWindow : EditorWindow
 public class GitPanelWindow : EditorWindow
 {
     private bool remoteHasChanges = false;
+    private bool localHasChanges = false;
     private async Task CheckRemoteChangesAsync()
     {
         await Task.Run(() =>
@@ -350,6 +351,23 @@ public class GitPanelWindow : EditorWindow
         });
         Repaint();
     }
+    private async Task CheckLocalChangesAsync()
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                RunGitCommand("fetch origin");
+                string result = RunGitCommand("rev-list origin/main..HEAD --count");
+                localHasChanges = int.TryParse(result, out int count) && count > 0;
+            }
+            catch
+            {
+                localHasChanges = false;
+            }
+        });
+        Repaint();
+    }
     private async void Update()
     {
         if (EditorApplication.timeSinceStartup - lastRefreshTime > refreshInterval)
@@ -359,10 +377,12 @@ public class GitPanelWindow : EditorWindow
             if (GitUtils.HasGitHubRemote())
             {
                 await CheckRemoteChangesAsync();
+                await CheckLocalChangesAsync();
             }
             else
             {
                 remoteHasChanges = false;
+                localHasChanges = false;
             }
             lastRefreshTime = EditorApplication.timeSinceStartup;
         }
@@ -422,10 +442,22 @@ public class GitPanelWindow : EditorWindow
                 UnityEngine.Debug.LogWarning("⚠️ Commit message cannot be empty.");
             }
         }
+        EditorGUI.BeginDisabledGroup(!localHasChanges);
         if (GUILayout.Button("↑ Push  ", GUILayout.Height(25), GUILayout.Width(position.width * 0.25f)))
         {
+            try
+            {
+                RunGitCommand("push -f");
+                UnityEngine.Debug.Log("✅ Push successful.");
+            }
+            catch (System.Exception e)
+            {
+                UnityEngine.Debug.LogError("❌ Push failed: " + e.Message);
+            }
             RefreshGitStatus();
         }
+        EditorGUI.EndDisabledGroup();
+
         EditorGUI.BeginDisabledGroup(!remoteHasChanges);
         if (GUILayout.Button("↓ Pull  ", GUILayout.Height(25), GUILayout.Width(position.width * 0.25f)))
         {
