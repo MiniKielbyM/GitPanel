@@ -339,7 +339,7 @@ public class GitPanelWindow : EditorWindow
         {
             try
             {
-                RunGitCommand("fetch");
+                RunGitCommand("fetch origin");
                 string result = RunGitCommand("rev-list HEAD..origin/main --count");
                 remoteHasChanges = int.TryParse(result, out int count) && count > 0;
             }
@@ -359,9 +359,6 @@ public class GitPanelWindow : EditorWindow
             if (GitUtils.HasGitHubRemote())
             {
                 await CheckRemoteChangesAsync();
-                UnityEngine.Debug.Log(remoteHasChanges
-                    ? "🔄 Remote has changes."
-                    : "✅ Remote is up to date.");
             }
             else
             {
@@ -413,7 +410,6 @@ public class GitPanelWindow : EditorWindow
         GUILayout.Label("Commit Message", EditorStyles.boldLabel);
         commitMessage = GUILayout.TextField(commitMessage);
         GUILayout.BeginHorizontal();
-
         if (GUILayout.Button("✓ Commit", GUILayout.Height(25)))
         {
             if (!string.IsNullOrWhiteSpace(commitMessage))
@@ -430,10 +426,21 @@ public class GitPanelWindow : EditorWindow
         {
             RefreshGitStatus();
         }
+        EditorGUI.BeginDisabledGroup(!remoteHasChanges);
         if (GUILayout.Button("↓ Pull  ", GUILayout.Height(25), GUILayout.Width(position.width * 0.25f)))
         {
+            try
+            {
+                RunGitCommand("pull");
+                UnityEngine.Debug.Log("✅ Pull successful.");
+            }
+            catch (System.Exception e)
+            {
+                UnityEngine.Debug.LogError("❌ Pull failed: " + e.Message);
+            }
             RefreshGitStatus();
         }
+        EditorGUI.EndDisabledGroup();
         GUILayout.EndHorizontal();
         GUILayout.Space(10);
         GUILayout.Label("Changes", EditorStyles.boldLabel);
@@ -523,8 +530,6 @@ public class GitPanelWindow : EditorWindow
             process.WaitForExit();
             if (!string.IsNullOrEmpty(error))
                 UnityEngine.Debug.LogWarning("Git Error: " + error);
-            else
-                UnityEngine.Debug.Log(output);
             return output;
         }
     }
