@@ -1,3 +1,4 @@
+
 #if UNITY_EDITOR
 using UnityEngine;
 using UnityEditor;
@@ -331,6 +332,16 @@ public class GithubSignOutWindow : EditorWindow
 
 public class GitPanelWindow : EditorWindow
 {
+    private void Update()
+    {
+        if (EditorApplication.timeSinceStartup - lastRefreshTime > refreshInterval)
+        {
+            RefreshGitStatus();
+            Repaint();
+            lastRefreshTime = EditorApplication.timeSinceStartup;
+        }
+    }
+
     private string commitMessage = "";
     private List<GitFileChange> fileChanges = new List<GitFileChange>();
     private double lastRefreshTime;
