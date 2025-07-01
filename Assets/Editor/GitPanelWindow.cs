@@ -571,8 +571,6 @@ public class GitPanelWindow : EditorWindow
             string output = process.StandardOutput.ReadToEnd();
             string error = process.StandardError.ReadToEnd();
             process.WaitForExit();
-            if (!string.IsNullOrEmpty(error))
-                UnityEngine.Debug.LogWarning("Git Error: " + error);
             return output;
         }
     }
