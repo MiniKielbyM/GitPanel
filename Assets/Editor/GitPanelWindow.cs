@@ -10,8 +10,8 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.IO;
 using System.Diagnostics;
-using Unity.VisualScripting;
-
+using UnityEditor.SceneManagement;
+using UnityEngine.SceneManagement;
 public static class GitUtils
 {
     public static bool IsGitRepository(string path = null)
@@ -464,6 +464,7 @@ public class GitPanelWindow : EditorWindow
             try
             {
                 RunGitCommand("pull");
+                UnityEditor.SceneManagement.EditorSceneManager.OpenScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().path);
                 UnityEngine.Debug.Log("✅ Pull successful.");
             }
             catch (System.Exception e)
@@ -498,16 +499,26 @@ public class GitPanelWindow : EditorWindow
     {
         try
         {
+            Scene activeScene = SceneManager.GetActiveScene();
+            if (activeScene.isDirty)
+            {
+                if (!EditorUtility.DisplayDialog(
+                    "Unsaved Scene",
+                    "The active scene has unsaved changes. Do you want to save it before committing?",
+                    "Save and Commit", "Commit without Saving"))
+                {
+                    return; // User chose not to save
+                }
+                else
+                {
+                    EditorSceneManager.SaveScene(activeScene);
+                }
+            }
             RunGitCommand("add .");
             RunGitCommand("add .mp3");
             RunGitCommand("add .wav");
             RunGitCommand($"commit -m \"{message}\"");
             UnityEngine.Debug.Log("✅ Commit successful.");
-            if (EditorUtility.DisplayDialog("Push to GitHub", "Do you want to push your changes to GitHub?", "Push", "Cancel"))
-            {
-                RunGitCommand("push -f");
-                UnityEngine.Debug.Log("✅ Changes pushed to GitHub.");
-            }
             RefreshGitStatus();
             Repaint();
         }
