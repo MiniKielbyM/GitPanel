@@ -430,6 +430,7 @@ public class GitPanelWindow : EditorWindow
         GUILayout.Label("Commit Message", EditorStyles.boldLabel);
         commitMessage = GUILayout.TextField(commitMessage);
         GUILayout.BeginHorizontal();
+        EditorGUI.BeginDisabledGroup(!SceneManager.GetActiveScene().isDirty && fileChanges.Count == 0);
         if (GUILayout.Button("✓ Commit", GUILayout.Height(25)))
         {
             if (!string.IsNullOrWhiteSpace(commitMessage))
@@ -442,6 +443,7 @@ public class GitPanelWindow : EditorWindow
                 UnityEngine.Debug.LogWarning("⚠️ Commit message cannot be empty.");
             }
         }
+        EditorGUI.EndDisabledGroup();
         EditorGUI.BeginDisabledGroup(!localHasChanges);
         if (GUILayout.Button("↑ Push  ", GUILayout.Height(25), GUILayout.Width(position.width * 0.25f)))
         {
@@ -464,7 +466,7 @@ public class GitPanelWindow : EditorWindow
             try
             {
                 RunGitCommand("pull");
-                UnityEditor.SceneManagement.EditorSceneManager.OpenScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().path);
+                EditorSceneManager.OpenScene(SceneManager.GetActiveScene().path);
                 UnityEngine.Debug.Log("✅ Pull successful.");
             }
             catch (System.Exception e)
