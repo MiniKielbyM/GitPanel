@@ -1,4 +1,5 @@
 # GitPane: GitHub Integration for Unity Editor
+[![Athena Award Badge](https://img.shields.io/endpoint?url=https%3A%2F%2Faward.athena.hackclub.com%2Fapi%2Fbadge)](https://award.athena.hackclub.com?utm_source=readme)
 
 GitPane is a Unity Editor extension that provides direct access to Git and GitHub functionality from within the Unity Editor. It supports OAuth-based GitHub authentication and common Git operations such as commit, push, and pull, allowing developers to manage version control workflows without leaving the Unity environment.
 
